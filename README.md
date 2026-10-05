@@ -4,11 +4,11 @@ A lightweight HTML form with a PHP email handler and Google reCAPTCHA v3. The cu
 
 Repository: [Tanzi-Bee/php-fast-contact-form](https://github.com/Tanzi-Bee/php-fast-contact-form)
 
-This README describes the repository files reviewed on 5 October 2026. It documents the existing implementation; the recommended code changes below are not implemented by this documentation update.
+This README describes the repository files reviewed on 5 October 2026. The secret-handling update on 5 October 2026 removes the hard-coded secret, loads it from `RECAPTCHA_SECRET_KEY`, and sends verification using POST. Other recommended changes below remain separate.
 
 ## Important security notice
 
-**The repository exposes a hard-coded reCAPTCHA secret in `send_email.php`. Treat it as compromised and rotate it before using the form.** Removing it from the latest file does not revoke it or remove it from Git history, forks or downloaded copies. Revoke or replace the exposed credential through Google's administration tools and update every deployment that uses it. If replacement requires a new key pair, update both site-key references as well.
+**An earlier version of `send_email.php` exposed a hard-coded reCAPTCHA secret. It has been removed from the current file, but remains exposed in repository history. Treat it as compromised and rotate it before using the form.** Removing it from the latest file does not revoke it or remove it from Git history, forks or downloaded copies. Revoke or replace the exposed credential through Google's administration tools and update every deployment that uses it. If replacement requires a new key pair, update both site-key references as well.
 
 The existing site key is public by design. The secret is private and must never appear in HTML, JavaScript, README examples, screenshots, support tickets or future commits. This README deliberately does not reproduce either existing key.
 
@@ -48,17 +48,17 @@ git clone https://github.com/Tanzi-Bee/php-fast-contact-form.git
 cd php-fast-contact-form
 ```
 
-Make deployment configuration changes in a private working copy. Do not push credentials back to GitHub. The steps below describe changes a deployer must make; this README update does not modify PHP or HTML.
+Make deployment configuration changes in a private working copy. Do not push credentials back to GitHub. The steps below describe deployment configuration. Never store a replacement secret in a committed file.
 
 ### 1. Configure reCAPTCHA v3
 
 1. Open the [Google reCAPTCHA Admin Console](https://www.google.com/recaptcha/admin) and register the deployment domain for reCAPTCHA v3. Use credentials compatible with the current `siteverify` integration. A reCAPTCHA Enterprise assessment integration is not a drop-in replacement.
 2. Add the production and any staging hostnames according to Google's domain settings. Enter hostnames, not full page URLs or folder paths. Keep domain verification enabled.
 3. In `index.html`, replace the existing site key in **both** places: the script URL's `render=` parameter and the first argument to `grecaptcha.execute()`.
-4. In the private deployment copy of `send_email.php`, replace the value assigned to `$recaptcha_secret` with the new, corresponding secret. Do not reuse the exposed secret.
+4. Configure a private server environment variable named `RECAPTCHA_SECRET_KEY` with the new, corresponding secret. Do not reuse the exposed secret or paste the replacement into PHP. Ask your hosting provider how to make this variable available to the domain's PHP process; cPanel's available controls vary by host. A shell-only environment variable may not reach web requests. Without this setting, the handler returns HTTP 503 and does not send email.
 5. Preserve the hidden field's name `g-recaptcha-response`, its ID `recaptchaResponse` and the current action name `submit` unless you deliberately update the integration together.
 
-The current handler requires `success` and a score of at least `0.5`. It does **not** check the returned action or hostname. Those checks need a separate code change.
+The current handler requires `success` and a score of at least `0.5`. It also requires the returned action to be `submit`. It does **not** check the returned hostname; that remains a recommended code change.
 
 Google's tokens expire after two minutes and can be verified only once. The current page generates a token on page load, which is unsuitable for a lengthy discovery form. A quick submission may work while a genuine visitor who takes longer is rejected. Refreshing and submitting promptly is a diagnostic workaround, not a production fix. Generate a fresh token at submission time as recommended below.
 
@@ -126,6 +126,7 @@ Opening `index.html` from your computer can preview the layout but cannot test t
 | reCAPTCHA verification fails | Check both site-key references, the matching rotated secret, registered domain, script loading and token age. The score must be at least `0.5`. Do not disable verification to force a pass. |
 | `grecaptcha` is undefined or the token stays empty | Check browser console and network errors, content blockers, script restrictions and access to Google. Check that the hidden input exists when the callback runs. |
 | Google verification cannot be reached | Ask the host to check outbound HTTPS, DNS, TLS certificates and `allow_url_fopen`. Do not disable TLS verification. |
+| Form temporarily unavailable (HTTP 503) | Ask the host to make the new `RECAPTCHA_SECRET_KEY` environment variable available to the web PHP process. Never expose it through a public diagnostic page. |
 | PHP warning, blank response or HTTP 500 | Consult private server logs for missing POST fields, unexpected field types, failed network requests or invalid JSON. Avoid enabling public error display. |
 | “Issue submitting” message | Check whether `mail()` is enabled and properly configured, sender requirements and host sending limits. |
 | Thank-you page appears but no email arrives | Check recipient spelling, spam folders, quarantine, mail logs, bounces and SPF/DKIM/DMARC. Ask the host to trace the message. |
@@ -138,7 +139,7 @@ Opening `index.html` from your computer can preview the layout but cannot test t
 
 Do not rely on the browser's `required` attribute for security. The handler does not comprehensively validate required fields, lengths, data types or permitted checkbox values. `htmlspecialchars()` is output escaping for HTML, not complete input validation, and checkbox arrays are currently joined without equivalent checks.
 
-The handler sends the secret and token in the verification URL query string. Such URLs may appear in diagnostic logs. Network failures and incomplete responses are not robustly handled. The handler lacks application-level rate limiting and explicit action/hostname verification. reCAPTCHA alone does not prevent all abuse.
+The handler now sends the secret and token in an HTTPS POST body with a ten-second timeout. Missing configuration, missing tokens, failed network requests and invalid verification responses stop submission. Keep request bodies out of diagnostic logs. The handler still lacks application-level rate limiting and hostname verification. reCAPTCHA alone does not prevent all abuse.
 
 Use HTTPS, supported server software and private error logs. Restrict access to the hosting account and backups. Do not request passwords, payment details or other sensitive information through this form. Email is not a secure storage system for confidential briefs.
 
@@ -146,11 +147,11 @@ Review your privacy notice and Google's reCAPTCHA disclosure requirements before
 
 ## Recommended code changes: handle separately
 
-**These changes are recommendations, not features of the current code. No PHP or HTML changes are included in this README replacement.**
+**The changes below are still required or recommended separately. Secret removal, environment-variable loading, POST verification, timeout handling and the action check are implemented; credential revocation and hosting configuration still require administrator action.**
 
-1. **Rotate the exposed secret urgently.** Move the replacement into a server environment variable or protected configuration outside the document root. Add appropriate Git exclusions and secret scanning. History cleanup may reduce exposure, but cannot replace revocation.
+1. **Rotate the exposed secret urgently.** Set the replacement in the private server environment variable `RECAPTCHA_SECRET_KEY`, which the handler now reads. Add appropriate Git exclusions and secret scanning. History cleanup may reduce exposure, but cannot replace revocation.
 2. **Generate reCAPTCHA tokens on submission.** Wait for a fresh token before posting, prevent duplicate submissions and handle script errors without losing the user's brief.
-3. **Strengthen server verification.** Use an HTTPS POST request with encoded parameters, a timeout and explicit failure handling. Validate response structure, `success`, numeric score, expected `submit` action and an allowed hostname. Reject missing or malformed verification data safely.
+3. **Strengthen server verification.** Add allowed-hostname validation. The handler now uses HTTPS POST, a timeout, response checks, success and score checks, and the expected `submit` action.
 4. **Validate all submitted fields.** Require the business name on the server, enforce sensible length limits, reject incorrect scalar/array types, and allow only recognised checkbox and select values. Use output handling appropriate to plain-text email.
 5. **Add contact details.** Collect and validate a visitor name and email address. Keep a fixed authorised `From` address and use only a validated visitor address for `Reply-To`, preventing header injection.
 6. **Improve email reliability.** Replace `mail()` with a maintained SMTP library such as PHPMailer and authenticated SMTP or an email service. Protect its credentials and handle errors, bounces and delivery status appropriately.
