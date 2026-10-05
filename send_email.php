@@ -1,16 +1,43 @@
 <?php
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     
-    // Google reCAPTCHA secret key
-    $recaptcha_secret = "6Lf0KtkqAAAAANShqf7AN970xEabbkUGeN4tgKe2"; // Replace with your actual reCAPTCHA secret key
-    $recaptcha_response = $_POST['g-recaptcha-response'];
+    // Configure RECAPTCHA_SECRET_KEY privately on the server; never commit it.
+    $recaptcha_secret = getenv('RECAPTCHA_SECRET_KEY');
+    if (!is_string($recaptcha_secret) || trim($recaptcha_secret) === '') {
+        http_response_code(503);
+        echo 'The form is temporarily unavailable. Please contact the website owner.';
+        exit;
+    }
+    $recaptcha_response = $_POST['g-recaptcha-response'] ?? '';
+    if (!is_string($recaptcha_response) || trim($recaptcha_response) === '') {
+        http_response_code(400);
+        echo 'reCAPTCHA verification failed. Please reload the form and try again.';
+        exit;
+    }
     $recaptcha_url = "https://www.google.com/recaptcha/api/siteverify";
     
     // Validate reCAPTCHA
-    $recaptcha = file_get_contents($recaptcha_url . '?secret=' . $recaptcha_secret . '&response=' . $recaptcha_response);
-    $recaptcha = json_decode($recaptcha, true);
+    // Use POST so the secret and token are not included in the request URL.
+    $verification_context = stream_context_create([
+        'http' => [
+            'method' => 'POST',
+            'header' => "Content-Type: application/x-www-form-urlencoded\r\n",
+            'content' => http_build_query([
+                'secret' => $recaptcha_secret,
+                'response' => $recaptcha_response,
+            ]),
+            'timeout' => 10,
+        ],
+    ]);
+    $verification_result = @file_get_contents($recaptcha_url, false, $verification_context);
+    $recaptcha = is_string($verification_result) ? json_decode($verification_result, true) : null;
     
-    if (!$recaptcha['success'] || $recaptcha['score'] < 0.5) {
+    if (!is_array($recaptcha)
+        || ($recaptcha['success'] ?? false) !== true
+        || !isset($recaptcha['score'])
+        || !is_numeric($recaptcha['score'])
+        || $recaptcha['score'] < 0.5
+        || ($recaptcha['action'] ?? '') !== 'submit') {
         echo "<script>alert('reCAPTCHA verification failed. Please try again.'); window.history.back();</script>";
         exit;
     }
